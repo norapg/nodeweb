@@ -1,0 +1,50 @@
+version: '3.8' # Docker Compose のバージョンを指定。より新しい機能を使うために '3.8' を推奨
+
+services:
+  # --- Webサーバーサービス ---
+  web:
+    build: . # Dockerfileがある現在のディレクトリをビルドコンテキストとする
+    container_name: webserver_app # コンテナにわかりやすい名前を付ける
+    volumes:
+      - .:/project-name # ホストのカレントディレクトリをコンテナ内の /project-name にマウント
+    command: node app.js # コンテナ起動時に実行するコマンド
+    ports:
+      - "8000:8000" # ホストの8000番ポートを、コンテナの8000番ポートにマッピング
+                     # app.js で port を 8000 に設定しているため、ホスト側も 8000 に合わせるのが一般的です。
+    depends_on:
+      db:
+        condition: service_healthy # dbサービスがhealthyになるまで待機
+    environment: # WebサーバーからDBに接続するための環境変数を設定
+      PG_HOST: db # DBサーバーのサービス名（docker-compose内で自動的に名前解決される）
+      PG_DATABASE: dvdrental
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      PG_PORT: 5432
+
+  # --- DBサーバーサービス ---
+  db:
+    image: postgres:14.5-bullseye # 使用するPostgreSQLイメージ
+    container_name: postgres_db # コンテナにわかりやすい名前を付ける
+    environment: # PostgreSQLの設定
+      POSTGRES_DB: dvdrental # 作成されるデータベース名 (init-db.sh が作成するため、ここでは主にPostgresのデフォルト動作のため)
+      POSTGRES_USER: postgres # データベースユーザー名
+      POSTGRES_PASSWORD: postgres # データベースパスワード
+    ports:
+      - "5432:5432" # ホストの5432番ポートを、コンテナの5432番ポートにマッピング
+                     # これにより、ホストから直接psqlなどのツールでDBに接続できます（任意）
+    volumes:
+      - db-data:/var/lib/postgresql/data # DBのデータを永続化するためのボリューム
+                                        # ホスト側の `db-data` という名前付きボリュームに保存される
+      # 初期化スクリプトとtarファイルを /docker-entrypoint-initdb.d/ にマウント
+      # ホストの ./db_init ディレクトリをコンテナの /docker-entrypoint-initdb.d/ にマウント
+      - ./db_init/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh # init-db.shを直接マウント
+      - ./dvdrental.tar:/docker-entrypoint-initdb.d/dvdrental.tar # dvdrental.tarを直接マウント
+    healthcheck: # DBが完全に起動して利用可能になったことを確認するためのヘルスチェック
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"] # $$ は環境変数のエスケープ
+      interval: 5s # 5秒ごとにチェック
+      timeout: 5s # 各チェックのタイムアウト
+      retries: 5 # 5回のリトライでHealthyと判断
+
+# --- ボリュームの定義 ---
+volumes:
+  db-data: # 上記で指定した名前付きボリュームを定義
